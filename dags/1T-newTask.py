@@ -3,6 +3,7 @@ from airflow.operators.bash_operator import BashOperator
 from airflow.operators.python_operator import PythonOperator
 from airflow.utils.dates import days_ago
 from airflow.models import Variable
+from airflow.hooks.base import BaseHook
 
 from datetime import datetime
 from time import localtime, strftime
@@ -15,23 +16,34 @@ default_args = {
     'start_date': days_ago(1)
 }
 
-url_conf = {
-    "table_name": "rates",
-    "rate_base": "BTC",
-    "rate_target": "RUB",
-    "url_base": "https://api.exchangerate.host/latest"
-}
+variables = Variable.set(key="url_conf",
+                         value={"rate_base": "BTC",
+                                "rate_target": "RUB",
+                                "connection_name":"my_postgres",
+                                "url_base":"https://api.exchangerate.host/"},
+                         serialize_json=True)
+url_config = Variable.get("url_conf", deserialize_json=True)
+
+def get_conn_credentials(conn_id) -> BaseHook.get_connection:
+    """
+    Function returns dictionary with connection credentials
+
+    :param conn_id: str with airflow connection id
+    :return: Connection
+    """
+    conn = BaseHook.get_connection(conn_id)
+    return conn
 
 def request(**kwargs):
     hist_date = "latest"
-    url = url_conf['url_base'] + hist_date
-    ingest_datetime = strftime("%Y-%m-%d %H: %M: %S", localtime())
-    response = requests.get(url, params={'base': url_conf['rate_base']})
+    url = url_config['url_base'] + hist_date
+    ingest_datetime = strftime("%Y-%m-%d %H:%M:%S", localtime())
+    response = requests.get(url, params={'base': url_config['rate_base']})
     data = response.json()
     rate_date = data['date']
     value = str(decimal.Decimal(data['rates']['RUB']))[:20]
     ti = kwargs['ti']
-    ti.xcom_push(key='results', value={"rate_date": rate_date, "value": value})
+    ti.xcom_push(key='results', value={"datetime": ingest_datetime, "value": value})
 
 
 def dbconnect(**kwargs):
@@ -40,14 +52,16 @@ def dbconnect(**kwargs):
     counter = Variable.get('counter')
     Variable.set("counter", int(counter) + 1)
     count = Variable.get('counter')
-    db_connection = psycopg2.connect(dbname='WorkDB',
-                                     user='admin',
-                                     password='password',
-                                     host='host.docker.internal',
-                                     port='5432')
+    db_con = get_conn_credentials(url_config.get("connection_name"))
+    db_hostname, db_port, db_username, db_pass, db_db = db_con.host, db_con.port, db_con.login, db_con.password, db_con.schema
+    db_connection = psycopg2.connect(dbname=db_db,
+                                     user=db_username,
+                                     password=db_pass,
+                                     host=db_hostname,
+                                     port=db_port)
     cur = db_connection.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS execute_rate(id int PRIMARY KEY, RUB decimal, dates date)")
-    cur.execute("INSERT INTO execute_rate (id, RUB, dates) VALUES (%s, %s, %s)", (count, result["value"], result["rate_date"]))
+    cur.execute("CREATE TABLE IF NOT EXISTS execute_rate(id int PRIMARY KEY, RUB decimal, dates timestamp)")
+    cur.execute("INSERT INTO execute_rate (id, RUB, dates) VALUES (%s, %s, %s)", (count, result["value"], result["datetime"]))
     db_connection.commit()
     cur.close()
     db_connection.close()
