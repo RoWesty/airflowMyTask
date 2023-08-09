@@ -3,4 +3,4 @@
 > [!IMPORTANT]
 > counter = 0
 ## Connections
-![](../blob/main/connection_settings.PNG)
+Смотрите png изображение connection_settings.
