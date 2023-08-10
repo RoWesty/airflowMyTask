@@ -16,12 +16,6 @@ default_args = {
     'start_date': days_ago(1)
 }
 
-variables = Variable.set(key="url_conf",
-                         value={"rate_base": "BTC",
-                                "rate_target": "RUB",
-                                "connection_name":"my_postgres",
-                                "url_base":"https://api.exchangerate.host/"},
-                         serialize_json=True)
 url_config = Variable.get("url_conf", deserialize_json=True)
 
 def get_conn_credentials(conn_id) -> BaseHook.get_connection:
